@@ -21,6 +21,7 @@ const routes = [
       { path: 'monitor', name: 'Monitor', component: () => import('@/views/Monitor.vue'), meta: { title: '监控告警' } },
       { path: 'logs', name: 'Logs', component: () => import('@/views/Logs.vue'), meta: { title: '日志查询' } },
       { path: 'tasks', name: 'Tasks', component: () => import('@/views/Tasks.vue'), meta: { title: 'Ansible 任务' } },
+      { path: 'terminal', name: 'Terminal', component: () => import('@/views/Terminal.vue'), meta: { title: 'SSH 终端' } },
       { path: 'users', name: 'Users', component: () => import('@/views/Users.vue'), meta: { title: '用户管理' } },
     ],
   },

@@ -65,14 +65,23 @@ async def get_overview(
     _: models.User = Depends(get_current_user)
 ):
     """获取主机概览指标（CPU、内存、磁盘），支持指定 instance"""
-    # instance 格式如 "192.168.1.1:9100"
-    inst_filter = f',instance="{instance}"' if instance else ''
-    queries = {
-        "cpu_usage": f'100 - (avg(irate(node_cpu_seconds_total{{mode="idle"{inst_filter}}}[5m])) * 100)',
-        "mem_usage": f'(1 - (node_memory_MemAvailable_bytes{{{inst_filter.lstrip(",")}}} / node_memory_MemTotal_bytes{{{inst_filter.lstrip(",")}}})) * 100',
-        "disk_usage": f'(1 - (node_filesystem_avail_bytes{{mountpoint="/",fstype!="tmpfs"{inst_filter}}} / node_filesystem_size_bytes{{mountpoint="/",fstype!="tmpfs"{inst_filter}}})) * 100',
-        "load1": f'node_load1{{{inst_filter.lstrip(",")}}}',
-    }
+    # 构建 instance 过滤条件
+    if instance:
+        f = f'instance="{instance}"'
+        queries = {
+            "cpu_usage":  f'100 - (avg by(instance) (irate(node_cpu_seconds_total{{mode="idle",{f}}}[5m])) * 100)',
+            "mem_usage":  f'(1 - (node_memory_MemAvailable_bytes{{{f}}} / node_memory_MemTotal_bytes{{{f}}})) * 100',
+            "disk_usage": f'(1 - (node_filesystem_avail_bytes{{mountpoint="/",fstype!="tmpfs",{f}}} / node_filesystem_size_bytes{{mountpoint="/",fstype!="tmpfs",{f}}})) * 100',
+            "load1":      f'node_load1{{{f}}}',
+        }
+    else:
+        queries = {
+            "cpu_usage":  '100 - (avg(irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)',
+            "mem_usage":  '(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100',
+            "disk_usage": '(1 - (node_filesystem_avail_bytes{mountpoint="/",fstype!="tmpfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!="tmpfs"})) * 100',
+            "load1":      'node_load1',
+        }
+
     result = {}
     async with httpx.AsyncClient(timeout=10) as client:
         for key, q in queries.items():

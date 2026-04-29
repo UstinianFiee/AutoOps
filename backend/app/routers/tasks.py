@@ -124,29 +124,36 @@ def _run_task_bg(task_id: int, server_id: int, db_url: str):
         script_path = None  # shell 任务的临时脚本路径
 
         if task.task_type == "shell":
-            # 把命令写到临时 shell 脚本，用 script 模块执行，避免 YAML 特殊字符问题
             cmd = params.get("command", "echo hello")
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".sh", delete=False, prefix="autoops_cmd_"
             ) as sf:
-                sf.write("#!/bin/bash\nset -e\n")
+                sf.write("#!/bin/bash\n")
                 sf.write(cmd)
                 script_path = sf.name
             os.chmod(script_path, 0o755)
 
-            playbook = """---
-- hosts: target
-  become: yes
-  gather_facts: no
-  tasks:
-    - name: 执行脚本
-      script: {script}
-      register: result
-      ignore_errors: yes
-    - name: 输出结果
-      debug:
-        msg: "{{ result.stdout | default('') }}{{ result.stderr | default('') }}"
-""".format(script=script_path)
+            # 使用 % 格式化避免 .format() 对 {{ }} 的转义问题
+            playbook = (
+                "---\n"
+                "- hosts: target\n"
+                "  become: yes\n"
+                "  gather_facts: no\n"
+                "  tasks:\n"
+                "    - name: 执行脚本\n"
+                "      script: %s\n"
+                "      register: result\n"
+                "      ignore_errors: yes\n"
+                "    - name: 输出 stdout\n"
+                "      debug:\n"
+                "        msg: \"{{ result.stdout | default('(无输出)') }}\"\n"
+                "      when: result.stdout is defined and result.stdout != ''\n"
+                "    - name: 输出 stderr\n"
+                "      debug:\n"
+                "        msg: \"[stderr] {{ result.stderr | default('') }}\"\n"
+                "      when: result.stderr is defined and result.stderr != ''\n"
+            ) % script_path
+
         elif task.task_type == "install":
             # 安装软件包
             packages = params.get("packages", "")

@@ -6,6 +6,10 @@ const api = axios.create({
   timeout: 30000,
 })
 
+// 简单内存缓存（GET 请求，5秒内不重复请求）
+const _cache = new Map()
+const CACHE_TTL = 5000
+
 // 请求拦截：注入 token
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')
@@ -21,7 +25,6 @@ api.interceptors.response.use(
     const msg = err.response?.data?.detail || err.message || '请求失败'
 
     if (status === 401) {
-      // 只有已登录状态下收到 401 才跳转（登录接口本身的 401 由调用方处理）
       const isLoginRequest = err.config?.url?.includes('/auth/login')
       if (!isLoginRequest) {
         localStorage.removeItem('token')
@@ -29,8 +32,12 @@ api.interceptors.response.use(
         localStorage.removeItem('role')
         window.location.href = '/login'
       }
-      // 登录接口的 401 直接抛出，由 Login.vue 的 catch 处理
-    } else {
+    } else if (status === 409) {
+      // 并发冲突（部署锁），直接显示
+      ElMessage.warning(msg)
+    } else if (status >= 500) {
+      ElMessage.error(`服务器错误 (${status}): ${msg}`)
+    } else if (status !== 404) {
       ElMessage.error(msg)
     }
 

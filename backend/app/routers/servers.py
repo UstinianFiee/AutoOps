@@ -219,6 +219,8 @@ def _run_ansible_init(task_id: int, server_id: int, db_url: str):
     engine = create_engine(db_url, pool_pre_ping=True)
     Sess = sessionmaker(bind=engine)
     db = Sess()
+    key_path = None
+    inv_path = None
     try:
         task = db.query(Task).filter(Task.id == task_id).first()
         server = db.query(Server).filter(Server.id == server_id).first()
@@ -228,15 +230,23 @@ def _run_ansible_init(task_id: int, server_id: int, db_url: str):
         db.commit()
 
         # 生成临时 inventory
-        inv_content = f"[target]\n{server.ip} ansible_port={server.port} ansible_user={server.username}"
+        inv_content = (
+            f"[target]\n{server.ip} "
+            f"ansible_port={server.port} "
+            f"ansible_user={server.username} "
+            f"ansible_ssh_extra_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
+        )
         if server.auth_type == "password":
-            inv_content += f" ansible_password={server.password} ansible_ssh_extra_args='-o StrictHostKeyChecking=no'"
+            inv_content += f" ansible_password={server.password}"
         else:
-            inv_content += f" ansible_ssh_private_key_file=/tmp/key_{server.id}.pem ansible_ssh_extra_args='-o StrictHostKeyChecking=no'"
-            if server.private_key:
-                with open(f"/tmp/key_{server.id}.pem", "w") as f:
-                    f.write(server.private_key)
-                os.chmod(f"/tmp/key_{server.id}.pem", 0o600)
+            # 用临时文件存密钥，避免 id 复用冲突
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".pem", delete=False, prefix=f"autoops_key_{server_id}_"
+            ) as kf:
+                kf.write(server.private_key or "")
+                key_path = kf.name
+            os.chmod(key_path, 0o600)
+            inv_content += f" ansible_ssh_private_key_file={key_path}"
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".ini", delete=False) as inv_file:
             inv_file.write(inv_content)
@@ -247,7 +257,7 @@ def _run_ansible_init(task_id: int, server_id: int, db_url: str):
             ["ansible-playbook", "-i", inv_path, playbook],
             capture_output=True, text=True, timeout=300
         )
-        task.output = result.stdout + result.stderr
+        task.output = result.stdout + (("\n[STDERR]\n" + result.stderr) if result.stderr.strip() else "")
         task.status = "success" if result.returncode == 0 else "failed"
         task.finished_at = datetime.utcnow()
         db.commit()
@@ -258,6 +268,12 @@ def _run_ansible_init(task_id: int, server_id: int, db_url: str):
             task.finished_at = datetime.utcnow()
             db.commit()
     finally:
+        for p in [inv_path, key_path]:
+            try:
+                if p:
+                    os.unlink(p)
+            except Exception:
+                pass
         db.close()
 
 
@@ -267,11 +283,13 @@ def _install_exporter_bg(task_id: int, server_id: int, db_url: str):
     from sqlalchemy.orm import sessionmaker
     from app.models import Task, Server
     from datetime import datetime
-    import subprocess, tempfile, os, yaml
+    import subprocess, tempfile, os
 
     engine = create_engine(db_url, pool_pre_ping=True)
     Sess = sessionmaker(bind=engine)
     db = Sess()
+    key_path = None
+    inv_path = None
     try:
         task = db.query(Task).filter(Task.id == task_id).first()
         server = db.query(Server).filter(Server.id == server_id).first()
@@ -280,25 +298,29 @@ def _install_exporter_bg(task_id: int, server_id: int, db_url: str):
         task.status = "running"
         db.commit()
 
-        # 生成 inventory
-        inv = f"[target]\n{server.ip} ansible_port={server.port} ansible_user={server.username} ansible_ssh_extra_args='-o StrictHostKeyChecking=no'"
+        # 生成 inventory（同样用临时文件存密钥）
+        inv = (
+            f"[target]\n{server.ip} "
+            f"ansible_port={server.port} "
+            f"ansible_user={server.username} "
+            f"ansible_ssh_extra_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
+        )
         if server.auth_type == "password":
             inv += f" ansible_password={server.password}"
         else:
-            key_path = f"/tmp/key_{server.id}.pem"
-            if server.private_key:
-                with open(key_path, "w") as f:
-                    f.write(server.private_key)
-                os.chmod(key_path, 0o600)
-            inv += f" ansible_ssh_private_key_file=/tmp/key_{server.id}.pem"
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".pem", delete=False, prefix=f"autoops_key_{server_id}_"
+            ) as kf:
+                kf.write(server.private_key or "")
+                key_path = kf.name
+            os.chmod(key_path, 0o600)
+            inv += f" ansible_ssh_private_key_file={key_path}"
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".ini", delete=False) as f:
             f.write(inv)
             inv_path = f.name
 
-        # 使用独立的 playbook 文件
         pb_path = "/app/ansible/install_node_exporter.yml"
-
         result = subprocess.run(
             ["ansible-playbook", "-i", inv_path, pb_path],
             capture_output=True, text=True, timeout=300
@@ -306,7 +328,6 @@ def _install_exporter_bg(task_id: int, server_id: int, db_url: str):
         output = result.stdout + (("\n[STDERR]\n" + result.stderr) if result.stderr.strip() else "")
 
         if result.returncode == 0:
-            # 更新 Prometheus 配置，添加该服务器
             _update_prometheus_config(server.ip, server.name)
             output += f"\n\n[INFO] 已将 {server.ip}:9100 加入 Prometheus 监控"
             task.status = "success"
@@ -317,12 +338,6 @@ def _install_exporter_bg(task_id: int, server_id: int, db_url: str):
         task.finished_at = datetime.utcnow()
         db.commit()
 
-        # 清理临时 inventory 文件
-        try:
-            os.unlink(inv_path)
-        except Exception:
-            pass
-
     except Exception as e:
         if task:
             task.status = "failed"
@@ -330,60 +345,63 @@ def _install_exporter_bg(task_id: int, server_id: int, db_url: str):
             task.finished_at = datetime.utcnow()
             db.commit()
     finally:
+        for p in [inv_path, key_path]:
+            try:
+                if p:
+                    os.unlink(p)
+            except Exception:
+                pass
         db.close()
 
 
 def _update_prometheus_config(ip: str, name: str = ""):
-    """动态将服务器加入 Prometheus 采集配置并热重载"""
-    import yaml, requests, os
+    """动态将服务器加入 Prometheus 采集配置并热重载（追加方式，保留原有注释）"""
+    import requests, re
 
     prom_config_path = "/etc/autoops/prometheus.yml"
+    target = f"{ip}:9100"
 
     try:
-        with open(prom_config_path, "r") as f:
-            config = yaml.safe_load(f)
+        with open(prom_config_path, "r", encoding="utf-8") as f:
+            content = f.read()
 
-        target = f"{ip}:9100"
-
-        # 找到 node job
-        node_job = None
-        for job in config.get("scrape_configs", []):
-            if job.get("job_name") == "node":
-                node_job = job
-                break
-
-        if node_job is None:
-            # 没有 node job，新建
-            config.setdefault("scrape_configs", []).append({
-                "job_name": "node",
-                "static_configs": [
-                    {"targets": ["node-exporter:9100"], "labels": {"server": "autoops"}},
-                    {"targets": [target], "labels": {"server": name or ip}},
-                ]
-            })
+        # 检查是否已存在
+        if target in content:
+            print(f"[INFO] {target} 已在 Prometheus 配置中，跳过")
         else:
-            # 检查是否已存在
-            all_targets = []
-            for sc in node_job.get("static_configs", []):
-                all_targets.extend(sc.get("targets", []))
-
-            if target not in all_targets:
-                node_job.setdefault("static_configs", []).append({
-                    "targets": [target],
-                    "labels": {"server": name or ip}
-                })
+            # 在 node job 的 static_configs 末尾追加新 target
+            # 找到 job_name: 'node' 块，在其最后一个 targets 行后追加
+            label = name or ip
+            new_entry = (
+                f"      - targets: ['{target}']\n"
+                f"        labels:\n"
+                f"          alias: '{label}'\n"
+            )
+            # 在注释行（# 远程受管服务器）后面插入，或在 node job 末尾追加
+            if "# 远程受管服务器" in content:
+                # 找到注释行，在其后插入
+                content = content.replace(
+                    "# 远程受管服务器",
+                    f"# 远程受管服务器\n{new_entry}",
+                    1
+                )
             else:
-                print(f"[INFO] {target} 已在 Prometheus 配置中，跳过")
-                return
+                # 在 cadvisor job 前插入
+                content = content.replace(
+                    "  - job_name: 'cadvisor'",
+                    f"{new_entry}  - job_name: 'cadvisor'",
+                    1
+                )
 
-        with open(prom_config_path, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            with open(prom_config_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[INFO] 已追加采集目标: {target}")
 
         # 热重载 Prometheus
         from app.config import settings
         resp = requests.post(f"{settings.PROMETHEUS_URL}/-/reload", timeout=5)
         if resp.status_code == 200:
-            print(f"[INFO] Prometheus 已热重载，新增采集目标: {target}")
+            print(f"[INFO] Prometheus 热重载成功")
         else:
             print(f"[WARN] Prometheus 热重载返回: {resp.status_code}")
 

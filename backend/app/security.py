@@ -61,3 +61,18 @@ def require_operator(current_user: models.User = Depends(get_current_user)) -> m
     if current_user.role not in ("admin", "operator"):
         raise HTTPException(status_code=403, detail="需要操作员或管理员权限")
     return current_user
+
+
+def verify_token(token: str, db: Session) -> Optional[models.User]:
+    """验证 token 并返回用户，用于 WebSocket 等非标准场景"""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        username: str = payload.get("sub")
+        if not username:
+            return None
+    except JWTError:
+        return None
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if user is None or not user.is_active:
+        return None
+    return user

@@ -137,6 +137,7 @@ const icons = {
   monitor: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
   logs: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="1.8"/><polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="1.8"/><line x1="16" y1="13" x2="8" y2="13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="16" y1="17" x2="8" y2="17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`,
   tasks: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  terminal: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M8 21h8M12 17v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M7 8l3 3-3 3M13 14h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
   users: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="currentColor" stroke-width="1.8"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`,
 }
 
@@ -145,10 +146,11 @@ const mainMenu = [
   { path: '/servers',   label: lang.t('服务器管理'), icon: icons.servers },
   { path: '/apps',      label: lang.t('应用管理'), icon: icons.apps },
   { path: '/containers',label: lang.t('容器管理'), icon: icons.containers },
-  { path: '/deploy',    label: lang.t('CI/CD 部署'), icon: icons.deploy },
+  { path: '/deploy',    label: lang.t('一键部署'), icon: icons.deploy },
   { path: '/monitor',   label: lang.t('监控告警'), icon: icons.monitor },
   { path: '/logs',      label: lang.t('日志查询'), icon: icons.logs },
   { path: '/tasks',     label: lang.t('Ansible 任务'), icon: icons.tasks },
+  { path: '/terminal',  label: lang.t('SSH 终端'), icon: icons.terminal },
 ]
 
 function handleCommand(cmd) {

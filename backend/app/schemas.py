@@ -87,33 +87,61 @@ class ServerOut(BaseModel):
 
 
 # ── App ───────────────────────────────────────────────
+import os as _os
+
+FORBIDDEN_PATHS = {"/", "/etc", "/bin", "/sbin", "/usr", "/lib", "/lib64",
+                   "/boot", "/dev", "/proc", "/sys", "/run", "/var/run", "/tmp"}
+
+def _validate_deploy_path(path: str) -> str:
+    path = path.strip()
+    if not path.startswith("/"):
+        raise ValueError("部署路径必须是绝对路径")
+    normalized = _os.path.normpath(path)
+    if normalized in FORBIDDEN_PATHS:
+        raise ValueError(f"禁止部署到系统关键目录: {normalized}")
+    return normalized
+
+
 class AppCreate(BaseModel):
     name: str
+    source_type: str = "git"
     git_url: Optional[str] = None
     branch: str = "main"
+    git_token: Optional[str] = None
     server_id: Optional[int] = None
     compose_content: Optional[str] = None
     deploy_path: str = "/opt/apps"
     remark: Optional[str] = None
 
+    def model_post_init(self, __context: Any) -> None:
+        self.deploy_path = _validate_deploy_path(self.deploy_path)
+
 
 class AppUpdate(BaseModel):
     git_url: Optional[str] = None
     branch: Optional[str] = None
+    git_token: Optional[str] = None
     server_id: Optional[int] = None
     compose_content: Optional[str] = None
     deploy_path: Optional[str] = None
     remark: Optional[str] = None
 
+    def model_post_init(self, __context: Any) -> None:
+        if self.deploy_path:
+            self.deploy_path = _validate_deploy_path(self.deploy_path)
+
 
 class AppOut(BaseModel):
     id: int
     name: str
+    source_type: str
     git_url: Optional[str]
     branch: str
     server_id: Optional[int]
     compose_content: Optional[str]
     deploy_path: str
+    has_token: bool = False
+    webhook_secret: Optional[str] = None
     status: str
     remark: Optional[str]
     created_at: datetime
@@ -126,6 +154,7 @@ class AppOut(BaseModel):
 class DeployRecordOut(BaseModel):
     id: int
     app_id: int
+    server_id: Optional[int]
     version: Optional[str]
     commit_sha: Optional[str]
     status: str
@@ -141,6 +170,7 @@ class DeployRecordOut(BaseModel):
 
 class DeployRequest(BaseModel):
     app_id: int
+    server_id: int                    # 必须指定目标服务器
     version: Optional[str] = None
     branch: Optional[str] = None
 

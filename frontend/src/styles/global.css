@@ -46,6 +46,9 @@ input:-webkit-autofill:focus {
   outline: none !important;
 }
 .el-select .el-input__wrapper { cursor: pointer; }
+/* 下拉弹出层不被 overflow:hidden 裁剪 */
+.el-select-dropdown { z-index: 9999 !important; }
+.el-popper.is-light { z-index: 9999 !important; }
 
 /* ── 卡片 ── */
 .el-card {

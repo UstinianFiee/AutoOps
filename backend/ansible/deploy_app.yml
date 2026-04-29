@@ -2,47 +2,171 @@
 - name: 部署应用
   hosts: target
   become: yes
-  gather_facts: no
+  gather_facts: yes
 
   tasks:
+    # ── 创建目录 ──────────────────────────────────────────────────────────────
     - name: 创建应用目录
       file:
         path: "{{ deploy_path | default('/opt/apps') }}/{{ app_name }}"
         state: directory
         mode: '0755'
 
-    - name: 克隆或更新 Git 仓库（禁用 HTTP/2 避免 curl 16 错误）
+    # ── Git 来源 ──────────────────────────────────────────────────────────────
+    - name: 克隆或更新 Git 仓库
       shell: |
         export GIT_CONFIG_NOSYSTEM=1
         git config --global http.version HTTP/1.1
         git config --global http.postBuffer 524288000
         DEST="{{ deploy_path | default('/opt/apps') }}/{{ app_name }}"
         if [ -d "$DEST/.git" ]; then
-          cd "$DEST" && git fetch origin && git reset --hard origin/{{ branch | default('main') }}
+          cd "$DEST"
+          git fetch origin
+          git reset --hard origin/{{ branch | default('main') }}
+          echo "[GIT] 已更新到最新提交: $(git rev-parse --short HEAD)"
         else
           git clone --branch {{ branch | default('main') }} {{ git_url }} "$DEST"
+          echo "[GIT] 克隆完成: $(cd $DEST && git rev-parse --short HEAD)"
         fi
-      when: git_url is defined and git_url != ''
+      register: git_result
+      when:
+        - source_type is defined
+        - source_type == 'git'
+        - git_url is defined
+        - git_url != ''
 
+    - name: 输出 Git 结果
+      debug:
+        msg: "{{ git_result.stdout_lines }}"
+      when:
+        - source_type is defined
+        - source_type == 'git'
+        - git_result is defined
+        - git_result.stdout_lines is defined
+        - git_result.stdout_lines | length > 0
+
+    # ── 上传来源 ──────────────────────────────────────────────────────────────
+    - name: 上传代码压缩包到目标服务器
+      copy:
+        src: "{{ upload_src }}"
+        dest: "/tmp/autoops_{{ app_name }}_src"
+        mode: '0644'
+      when:
+        - source_type is defined
+        - source_type == 'upload'
+        - upload_src is defined
+        - upload_src != ''
+
+    - name: 解压代码包到应用目录
+      shell: |
+        DEST="{{ deploy_path | default('/opt/apps') }}/{{ app_name }}"
+        FILE="/tmp/autoops_{{ app_name }}_src"
+        if file "$FILE" | grep -q "Zip"; then
+          unzip -o "$FILE" -d "$DEST"
+        elif file "$FILE" | grep -q "bzip2"; then
+          tar -xjf "$FILE" -C "$DEST"
+        else
+          tar -xzf "$FILE" -C "$DEST"
+        fi
+        rm -f "$FILE"
+        echo "[UPLOAD] 解压完成"
+      register: unzip_result
+      when:
+        - source_type is defined
+        - source_type == 'upload'
+        - upload_src is defined
+        - upload_src != ''
+
+    - name: 输出解压结果
+      debug:
+        msg: "{{ unzip_result.stdout_lines }}"
+      when:
+        - source_type is defined
+        - source_type == 'upload'
+        - unzip_result is defined
+        - unzip_result.stdout_lines is defined
+        - unzip_result.stdout_lines | length > 0
+
+    # ── 上传 docker-compose.yml ──────────────────────────────────────────────
     - name: 上传 docker-compose.yml
       copy:
         src: "{{ compose_src }}"
         dest: "{{ deploy_path | default('/opt/apps') }}/{{ app_name }}/docker-compose.yml"
+        mode: '0644'
       when: compose_src is defined and compose_src != ''
 
+    # ── 检查 docker-compose.yml 是否存在 ─────────────────────────────────────
+    - name: 检查 docker-compose.yml
+      stat:
+        path: "{{ deploy_path | default('/opt/apps') }}/{{ app_name }}/docker-compose.yml"
+      register: compose_file
+
+    - name: 如果没有 docker-compose.yml 则报错
+      fail:
+        msg: "未找到 docker-compose.yml，请在应用配置中填写 compose 内容或确保仓库中包含该文件"
+      when: not compose_file.stat.exists
+
+    # ── Docker Compose 部署 ───────────────────────────────────────────────────
     - name: 停止旧容器
       shell: |
-        cd {{ deploy_path | default('/opt/apps') }}/{{ app_name }} && docker compose down --remove-orphans || true
+        cd {{ deploy_path | default('/opt/apps') }}/{{ app_name }}
+        docker compose down --remove-orphans 2>&1 || true
+      register: down_result
+
+    - name: 输出停止结果
+      debug:
+        msg: "{{ down_result.stdout_lines }}"
+      when:
+        - down_result.stdout_lines is defined
+        - down_result.stdout_lines | length > 0
 
     - name: 拉取最新镜像
       shell: |
-        cd {{ deploy_path | default('/opt/apps') }}/{{ app_name }} && docker compose pull || true
+        cd {{ deploy_path | default('/opt/apps') }}/{{ app_name }}
+        docker compose pull 2>&1
+      register: pull_result
+      ignore_errors: yes
+
+    - name: 输出拉取结果
+      debug:
+        msg: "{{ pull_result.stdout_lines }}"
+      when:
+        - pull_result.stdout_lines is defined
+        - pull_result.stdout_lines | length > 0
+
+    - name: 输出拉取错误
+      debug:
+        msg: "[stderr] {{ pull_result.stderr_lines }}"
+      when:
+        - pull_result.stderr_lines is defined
+        - pull_result.stderr_lines | length > 0
 
     - name: 启动容器
       shell: |
-        cd {{ deploy_path | default('/opt/apps') }}/{{ app_name }} && docker compose up -d
-      register: compose_result
+        cd {{ deploy_path | default('/opt/apps') }}/{{ app_name }}
+        docker compose up -d 2>&1
+      register: up_result
 
-    - name: 输出部署结果
+    - name: 输出启动结果
       debug:
-        msg: "{{ compose_result.stdout }}"
+        msg: "{{ up_result.stdout_lines }}"
+      when:
+        - up_result.stdout_lines is defined
+        - up_result.stdout_lines | length > 0
+
+    - name: 等待容器启动
+      pause:
+        seconds: 3
+
+    - name: 查看容器状态
+      shell: |
+        cd {{ deploy_path | default('/opt/apps') }}/{{ app_name }}
+        docker compose ps 2>&1
+      register: ps_result
+
+    - name: 输出容器状态
+      debug:
+        msg: "{{ ps_result.stdout_lines }}"
+      when:
+        - ps_result.stdout_lines is defined
+        - ps_result.stdout_lines | length > 0

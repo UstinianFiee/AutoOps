@@ -107,18 +107,44 @@
     </el-dialog>
 
     <!-- 拉取镜像对话框 -->
-    <el-dialog v-model="pullImageDialog" title="拉取镜像" width="440px">
-      <el-input v-model="pullImageName" placeholder="例如: nginx:latest" />
+    <el-dialog v-model="pullImageDialog" title="拉取镜像" width="520px" :close-on-click-modal="!pulling">
+      <el-input
+        v-model="pullImageName"
+        placeholder="例如: nginx:latest"
+        :disabled="pulling"
+        @keyup.enter="pullImage"
+      />
+
+      <!-- 进度展示区 -->
+      <div v-if="pulling || pullLogs.length" class="pull-log-wrap">
+        <div class="pull-log-box" ref="pullLogBox">
+          <div
+            v-for="(line, i) in pullLogs"
+            :key="i"
+            :class="['pull-log-line', line.type]"
+          >{{ line.text }}</div>
+        </div>
+        <!-- 总进度条（本机 Docker SDK 才有百分比） -->
+        <el-progress
+          v-if="pullPercent > 0"
+          :percentage="pullPercent"
+          :status="pullPercent >= 100 ? 'success' : undefined"
+          style="margin-top:8px"
+        />
+      </div>
+
       <template #footer>
-        <el-button @click="pullImageDialog = false">取消</el-button>
-        <el-button type="primary" @click="pullImage" :loading="pulling">拉取</el-button>
+        <el-button @click="closePullDialog" :disabled="pulling">取消</el-button>
+        <el-button type="primary" @click="pullImage" :loading="pulling" :disabled="pulling">
+          {{ pulling ? '拉取中...' : '拉取' }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { Refresh, Download } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useLangStore } from '@/stores/lang'
@@ -137,6 +163,9 @@ const logs = ref('')
 const pullImageDialog = ref(false)
 const pullImageName = ref('')
 const pulling = ref(false)
+const pullLogs = ref([])
+const pullPercent = ref(0)
+const pullLogBox = ref(null)
 const selectedServerId = ref(null)
 const installingExporter = ref(false)
 
@@ -222,15 +251,85 @@ async function removeImage(row) {
 async function pullImage() {
   if (!pullImageName.value) return ElMessage.warning('请输入镜像名称')
   pulling.value = true
+  pullLogs.value = []
+  pullPercent.value = 0
+
+  const token = localStorage.getItem('token') || sessionStorage.getItem('token') || ''
+  const baseURL = api.defaults?.baseURL || '/api'
+  const serverParam = selectedServerId.value ? `&server_id=${selectedServerId.value}` : ''
+  const url = `${baseURL}/containers/images/pull-stream?image=${encodeURIComponent(pullImageName.value)}${serverParam}`
+
   try {
-    await api.post('/containers/images/pull', { image: pullImageName.value }, { params: serverQuery() })
-    ElMessage.success('拉取成功')
-    pullImageDialog.value = false
-    pullImageName.value = ''
-    loadImages()
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (!response.ok) {
+      const err = await response.text()
+      throw new Error(err || `HTTP ${response.status}`)
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const parts = buf.split('\n\n')
+      buf = parts.pop()
+      for (const part of parts) {
+        const line = part.replace(/^data:\s*/, '').trim()
+        if (!line) continue
+        try {
+          const msg = JSON.parse(line)
+          if (msg.type === 'progress') {
+            // 更新或追加日志行（按 layer 去重，只保留最新状态）
+            if (msg.layer) {
+              const idx = pullLogs.value.findIndex(l => l.layer === msg.layer)
+              if (idx >= 0) {
+                pullLogs.value[idx] = { ...msg, type: 'progress' }
+              } else {
+                pullLogs.value.push({ ...msg, type: 'progress' })
+              }
+            } else {
+              pullLogs.value.push({ text: msg.text, type: 'progress' })
+            }
+            if (msg.percent) pullPercent.value = msg.percent
+          } else if (msg.type === 'done') {
+            pullPercent.value = 100
+            pullLogs.value.push({ text: msg.text, type: 'done' })
+            ElMessage.success(msg.text)
+            pulling.value = false
+            pullImageName.value = ''
+            loadImages()
+          } else if (msg.type === 'error') {
+            pullLogs.value.push({ text: msg.text, type: 'error' })
+            ElMessage.error(msg.text)
+            pulling.value = false
+          }
+          // 自动滚动到底部
+          await nextTick()
+          if (pullLogBox.value) {
+            pullLogBox.value.scrollTop = pullLogBox.value.scrollHeight
+          }
+        } catch {}
+      }
+    }
+  } catch (e) {
+    pullLogs.value.push({ text: String(e), type: 'error' })
+    ElMessage.error('拉取失败: ' + e.message)
   } finally {
     pulling.value = false
   }
+}
+
+function closePullDialog() {
+  if (pulling.value) return
+  pullImageDialog.value = false
+  pullLogs.value = []
+  pullPercent.value = 0
+  pullImageName.value = ''
 }
 
 onMounted(async () => {
@@ -292,5 +391,31 @@ onMounted(async () => {
   max-height: 500px; overflow-y: auto;
   font-size: 12px; line-height: 1.5;
   white-space: pre-wrap; word-break: break-all;
+}
+
+.pull-log-wrap {
+  margin-top: 12px;
+}
+.pull-log-box {
+  background: #0f172a;
+  border-radius: 8px;
+  padding: 10px 12px;
+  max-height: 260px;
+  overflow-y: auto;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.pull-log-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #94a3b8;
+}
+.pull-log-line.done {
+  color: #4ade80;
+  font-weight: 600;
+}
+.pull-log-line.error {
+  color: #f87171;
 }
 </style>

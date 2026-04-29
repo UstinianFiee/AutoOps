@@ -4,44 +4,56 @@
       <!-- 左侧 -->
       <el-col :span="8" style="height:100%;display:flex;flex-direction:column;gap:12px">
 
+        <!-- 手动触发部署：内容自然高度，无滚动条 -->
         <el-card shadow="never" style="flex-shrink:0">
           <template #header><span style="font-weight:600">{{ lang.isZh ? '手动触发部署' : 'Manual Deploy' }}</span></template>
           <el-form :model="deployForm" label-position="top">
-            <el-form-item :label="lang.isZh ? '选择应用' : 'Application'">
-              <el-select v-model="deployForm.app_id" :placeholder="lang.isZh ? '请选择应用' : 'Select app'" style="width:100%">
-                <el-option v-for="a in apps" :key="a.id" :label="a.name" :value="a.id" />
+            <el-form-item :label="lang.isZh ? '选择应用' : 'Application'" style="margin-bottom:14px">
+              <el-select v-model="deployForm.app_id" :placeholder="lang.isZh ? '请选择应用' : 'Select app'" style="width:100%" @change="deployForm.server_id = null">
+                <el-option v-for="a in apps" :key="a.id" :label="a.name" :value="a.id">
+                  <span>{{ a.name }}</span>
+                  <el-tag size="small" :type="a.source_type === 'git' ? 'primary' : 'warning'" style="margin-left:6px">{{ a.source_type }}</el-tag>
+                </el-option>
               </el-select>
             </el-form-item>
-            <el-form-item :label="lang.isZh ? '版本 / 分支' : 'Version / Branch'">
+            <el-form-item :label="lang.isZh ? '目标服务器' : 'Target Server'" style="margin-bottom:14px">
+              <el-select v-model="deployForm.server_id" :placeholder="lang.isZh ? '选择部署目标服务器' : 'Select server'" style="width:100%">
+                <el-option v-for="s in servers" :key="s.id" :label="`${s.name} (${s.ip})`" :value="s.id">
+                  <span :style="{ color: s.status === 'online' ? '#16a34a' : '#94a3b8' }">●</span>
+                  {{ s.name }} ({{ s.ip }})
+                </el-option>
+              </el-select>
+            </el-form-item>
+            <el-form-item :label="lang.isZh ? '版本 / 分支' : 'Version / Branch'" style="margin-bottom:16px">
               <el-input v-model="deployForm.version" :placeholder="lang.isZh ? '留空使用应用默认分支' : 'Leave empty for default branch'" />
             </el-form-item>
-            <el-form-item>
-              <el-button type="primary" :loading="deploying" @click="triggerDeploy" style="width:100%">
-                <el-icon><Promotion /></el-icon>&nbsp;{{ lang.isZh ? '立即部署' : 'Deploy Now' }}
-              </el-button>
-            </el-form-item>
+            <el-button type="primary" :loading="previewing" @click="showPreview" style="width:100%" :disabled="!deployForm.app_id || !deployForm.server_id">
+              <el-icon><Promotion /></el-icon>&nbsp;{{ lang.isZh ? '预览并部署' : 'Preview & Deploy' }}
+            </el-button>
           </el-form>
         </el-card>
 
+        <!-- 版本回滚：内容自然高度 -->
         <el-card shadow="never" style="flex-shrink:0">
           <template #header><span style="font-weight:600">{{ lang.isZh ? '版本回滚' : 'Rollback' }}</span></template>
           <el-form :model="rollbackForm" label-position="top">
-            <el-form-item :label="lang.isZh ? '部署记录 ID' : 'Record ID'">
+            <el-form-item :label="lang.isZh ? '部署记录 ID' : 'Record ID'" style="margin-bottom:6px">
               <el-input-number v-model="rollbackForm.record_id" :min="1" controls-position="right" style="width:100%" />
             </el-form-item>
-            <el-form-item>
-              <el-button type="warning" @click="doRollback" style="width:100%">
-                <el-icon><RefreshLeft /></el-icon>&nbsp;{{ lang.isZh ? '回滚到此版本' : 'Rollback' }}
-              </el-button>
-            </el-form-item>
+            <div style="font-size:12px;color:#94a3b8;margin-bottom:14px">
+              {{ lang.isZh ? '从右侧找到成功的记录ID填入' : 'Enter a successful record ID from the right' }}
+            </div>
+            <el-button type="warning" @click="doRollback" style="width:100%">
+              <el-icon><RefreshLeft /></el-icon>&nbsp;{{ lang.isZh ? '回滚到此版本' : 'Rollback' }}
+            </el-button>
           </el-form>
         </el-card>
 
-        <!-- 占位撑满，让左侧和右侧底部对齐 -->
+        <!-- 撑满剩余空间，让左侧底部和右侧对齐 -->
         <div style="flex:1"></div>
       </el-col>
 
-      <!-- 右侧：部署记录 -->
+            <!-- 右侧：部署记录 -->
       <el-col :span="16" style="height:100%;display:flex;flex-direction:column">
         <el-card shadow="never" style="flex:1;display:flex;flex-direction:column;min-height:0">
           <template #header>
@@ -97,6 +109,35 @@
       </div>
       <pre class="log-box" ref="logBox">{{ liveLog }}</pre>
     </el-dialog>
+
+    <!-- 部署预览确认弹窗 -->
+    <el-dialog v-model="previewVisible" :title="lang.isZh ? '部署预览确认' : 'Deploy Preview'" width="520px">
+      <div v-if="previewData">
+        <el-alert v-if="previewData.is_deploying" type="warning" :title="previewData.warning" :closable="false" style="margin-bottom:12px" />
+        <el-descriptions :column="2" border size="small" style="margin-bottom:16px">
+          <el-descriptions-item :label="lang.isZh ? '应用' : 'App'">{{ previewData.app?.name }}</el-descriptions-item>
+          <el-descriptions-item :label="lang.isZh ? '来源' : 'Source'">{{ previewData.app?.source_type }}</el-descriptions-item>
+          <el-descriptions-item :label="lang.isZh ? '目标服务器' : 'Server'">{{ previewData.server?.name }} ({{ previewData.server?.ip }})</el-descriptions-item>
+          <el-descriptions-item :label="lang.isZh ? '部署路径' : 'Path'">{{ previewData.app?.deploy_path }}/{{ previewData.app?.name }}</el-descriptions-item>
+        </el-descriptions>
+        <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:8px">
+          {{ lang.isZh ? '将执行以下步骤：' : 'Steps to execute:' }}
+        </div>
+        <div v-for="(step, i) in previewData.steps" :key="i" class="preview-step">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;color:#3b82f6">
+            <polyline points="9 11 12 14 22 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>{{ step }}</span>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="previewVisible = false">{{ lang.isZh ? '取消' : 'Cancel' }}</el-button>
+        <el-button type="primary" :loading="deploying" @click="confirmDeploy" :disabled="previewData?.is_deploying">
+          {{ lang.isZh ? '确认部署' : 'Confirm Deploy' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -110,9 +151,13 @@ import dayjs from 'dayjs'
 
 const lang = useLangStore()
 const apps = ref([])
+const servers = ref([])
 const records = ref([])
 const loading = ref(false)
 const deploying = ref(false)
+const previewing = ref(false)
+const previewVisible = ref(false)
+const previewData = ref(null)
 const filterAppId = ref(null)
 const logDialog = ref(false)
 const currentRecord = ref(null)
@@ -120,7 +165,7 @@ const liveLog = ref('')
 const logBox = ref()
 let ws = null
 
-const deployForm = reactive({ app_id: null, version: '' })
+const deployForm = reactive({ app_id: null, server_id: null, version: '' })
 const rollbackForm = reactive({ record_id: null })
 
 function appName(id) { return apps.value.find(a => a.id === id)?.name || id }
@@ -142,15 +187,35 @@ async function loadRecords() {
 
 async function triggerDeploy() {
   if (!deployForm.app_id) return ElMessage.warning(lang.isZh ? '请选择应用' : 'Please select an app')
+  if (!deployForm.server_id) return ElMessage.warning(lang.isZh ? '请选择目标服务器' : 'Please select a server')
   deploying.value = true
   try {
     const res = await api.post('/deploy/trigger', deployForm)
     ElMessage.success(`${lang.isZh ? '部署已触发，记录ID' : 'Deploy triggered, ID'}: ${res.data.id}`)
+    previewVisible.value = false
     loadRecords()
     viewLog(res.data)
   } finally {
     deploying.value = false
   }
+}
+
+async function showPreview() {
+  if (!deployForm.app_id || !deployForm.server_id) return
+  previewing.value = true
+  try {
+    const res = await api.get(`/deploy/preview/${deployForm.app_id}`, {
+      params: { server_id: deployForm.server_id }
+    })
+    previewData.value = res.data
+    previewVisible.value = true
+  } finally {
+    previewing.value = false
+  }
+}
+
+async function confirmDeploy() {
+  await triggerDeploy()
 }
 
 async function doRollback() {
@@ -181,8 +246,9 @@ watch(logDialog, (v) => { if (!v && ws) { ws.close(); ws = null } })
 watch(filterAppId, loadRecords)
 
 onMounted(async () => {
-  const res = await api.get('/apps')
-  apps.value = res.data
+  const [appsRes, serversRes] = await Promise.all([api.get('/apps'), api.get('/servers')])
+  apps.value = appsRes.data
+  servers.value = serversRes.data
   loadRecords()
 })
 </script>
@@ -196,13 +262,20 @@ onMounted(async () => {
   font-size: 12px; line-height: 1.6;
   white-space: pre-wrap; word-break: break-all;
 }
-/* 右侧部署记录卡片 body 需要 flex */
+.preview-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #374151;
+  margin-bottom: 4px;
+  background: #f8fafc;
+}
 :deep(.el-card__body) { padding: 16px !important; }
 .el-col:last-child :deep(.el-card__body) {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 0 !important;
+  flex: 1; display: flex; flex-direction: column;
+  overflow: hidden; padding: 0 !important;
 }
 </style>

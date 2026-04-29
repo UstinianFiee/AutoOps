@@ -17,7 +17,14 @@ scrape_configs:
 
   - job_name: 'node'
     static_configs:
+      # AutoOps 本机 node-exporter（Docker 容器）
       - targets: ['node-exporter:9100']
+        labels:
+          alias: 'AutoOps本机'
+      # 远程受管服务器
+      - targets: ['106.75.146.115:9100']
+        labels:
+          alias: '106.75.146.115'
 
   - job_name: 'cadvisor'
     static_configs:

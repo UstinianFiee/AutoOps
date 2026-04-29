@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
@@ -284,6 +285,7 @@ def pull_image(
     db: Session = Depends(get_db),
     _: models.User = Depends(require_operator),
 ):
+    """同步拉取（兼容旧调用），推荐使用 GET /images/pull-stream"""
     image_name = body.get("image")
     if not image_name:
         raise HTTPException(status_code=400, detail="缺少 image 参数")
@@ -299,3 +301,121 @@ def pull_image(
         return {"message": f"镜像 {image_name} 拉取成功"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/images/pull-stream")
+def pull_image_stream(
+    image: str = Query(...),
+    server_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_operator),
+):
+    """SSE 流式拉取镜像，实时返回进度"""
+    server = _get_server(server_id, db)
+
+    def _sse(data: dict) -> str:
+        return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    if server:
+        # 远程：通过 SSH 流式读取 docker pull 输出
+        def remote_stream():
+            import paramiko, io
+            client_ssh = paramiko.SSHClient()
+            client_ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            try:
+                kwargs = dict(
+                    hostname=server.ip, port=server.port,
+                    username=server.username, timeout=30
+                )
+                if server.auth_type == "key" and server.private_key:
+                    kwargs["pkey"] = paramiko.RSAKey.from_private_key(
+                        io.StringIO(server.private_key)
+                    )
+                else:
+                    kwargs["password"] = server.password
+                client_ssh.connect(**kwargs)
+                transport = client_ssh.get_transport()
+                transport.set_keepalive(30)
+                chan = transport.open_session()
+                chan.get_pty()
+                chan.exec_command(f"docker pull {image}")
+                buf = ""
+                while True:
+                    if chan.recv_ready():
+                        chunk = chan.recv(4096).decode("utf-8", errors="replace")
+                        buf += chunk
+                        lines = buf.split("\n")
+                        buf = lines[-1]
+                        for line in lines[:-1]:
+                            line = line.strip()
+                            if line:
+                                yield _sse({"type": "progress", "text": line})
+                    elif chan.exit_status_ready():
+                        break
+                if buf.strip():
+                    yield _sse({"type": "progress", "text": buf.strip()})
+                rc = chan.recv_exit_status()
+                if rc == 0:
+                    yield _sse({"type": "done", "text": f"镜像 {image} 拉取成功"})
+                else:
+                    err = chan.recv_stderr(65535).decode("utf-8", errors="replace")
+                    yield _sse({"type": "error", "text": err or f"拉取失败，退出码 {rc}"})
+            except Exception as e:
+                yield _sse({"type": "error", "text": str(e)})
+            finally:
+                try:
+                    client_ssh.close()
+                except Exception:
+                    pass
+
+        return StreamingResponse(remote_stream(), media_type="text/event-stream")
+
+    else:
+        # 本机：使用 Docker SDK 低级 API 流式拉取
+        def local_stream():
+            if not DOCKER_AVAILABLE:
+                yield _sse({"type": "error", "text": "Docker SDK 未安装"})
+                return
+            try:
+                import docker as docker_sdk
+                low = docker_sdk.APIClient()
+                layers: dict = {}
+                for raw in low.pull(image, stream=True, decode=True):
+                    status = raw.get("status", "")
+                    layer_id = raw.get("id", "")
+                    progress = raw.get("progressDetail", {})
+                    error = raw.get("error", "")
+
+                    if error:
+                        yield _sse({"type": "error", "text": error})
+                        return
+
+                    if layer_id:
+                        current = progress.get("current", 0)
+                        total = progress.get("total", 0)
+                        layers[layer_id] = {
+                            "status": status,
+                            "current": current,
+                            "total": total,
+                        }
+                        total_cur = sum(v["current"] for v in layers.values())
+                        total_all = sum(v["total"] for v in layers.values() if v["total"])
+                        pct = int(total_cur * 100 / total_all) if total_all else 0
+                        yield _sse({
+                            "type": "progress",
+                            "text": f"[{layer_id[:12]}] {status}",
+                            "layer": layer_id,
+                            "layerStatus": status,
+                            "current": current,
+                            "total": total,
+                            "percent": pct,
+                        })
+                    else:
+                        if status:
+                            yield _sse({"type": "progress", "text": status})
+
+                yield _sse({"type": "done", "text": f"镜像 {image} 拉取成功"})
+            except Exception as e:
+                yield _sse({"type": "error", "text": str(e)})
+
+        return StreamingResponse(local_stream(), media_type="text/event-stream")

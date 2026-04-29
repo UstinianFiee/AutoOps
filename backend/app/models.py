@@ -46,11 +46,26 @@ class App(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(64), nullable=False, unique=True)
-    git_url = Column(String(256), nullable=True)
+
+    # 代码来源：git / upload
+    source_type = Column(String(16), default="git")
+
+    # Git 来源字段
+    git_url = Column(String(512), nullable=True)
     branch = Column(String(64), default="main")
+    git_token = Column(String(512), nullable=True)   # 加密存储的 Token
+
+    # 上传来源字段
+    upload_path = Column(String(512), nullable=True)  # 服务端存储路径
+
+    # 部署配置
     server_id = Column(Integer, ForeignKey("server.id"), nullable=True)
     compose_content = Column(Text, nullable=True)
     deploy_path = Column(String(256), default="/opt/apps")
+
+    # Webhook
+    webhook_secret = Column(String(128), nullable=True)  # 用于验证 webhook 签名
+
     status = Column(String(16), default="stopped")  # running / stopped / deploying
     remark = Column(String(256), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
@@ -65,10 +80,11 @@ class DeployRecord(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     app_id = Column(Integer, ForeignKey("app.id"), nullable=False)
+    server_id = Column(Integer, ForeignKey("server.id"), nullable=True)  # 部署目标服务器
     version = Column(String(128), nullable=True)
     commit_sha = Column(String(64), nullable=True)
-    status = Column(String(16), default="pending")  # pending / running / success / failed
-    trigger = Column(String(16), default="manual")  # manual / ci
+    status = Column(String(16), default="pending")  # pending / precheck / running / success / failed
+    trigger = Column(String(16), default="manual")  # manual / webhook
     log = Column(Text, nullable=True)
     operator = Column(String(64), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
