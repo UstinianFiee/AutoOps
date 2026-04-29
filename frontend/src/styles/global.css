@@ -1,0 +1,174 @@
+/* ── 全局重置 ── */
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color: #0f172a;
+}
+
+/* ── autofill 去蓝色底纹 ── */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #f8fafc inset !important;
+  -webkit-text-fill-color: #0f172a !important;
+  transition: background-color 9999s ease-in-out 0s;
+}
+
+/* ── Element Plus 输入框 ── */
+.el-input__wrapper {
+  box-shadow: none !important;
+  background: #f8fafc !important;
+  border: 1.5px solid #e2e8f0 !important;
+  border-radius: 8px !important;
+  transition: border-color 0.2s, box-shadow 0.2s !important;
+}
+.el-input__wrapper:hover { border-color: #93c5fd !important; }
+.el-input__wrapper.is-focus {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12) !important;
+  background: #fff !important;
+}
+.el-input__inner { background: transparent !important; }
+.el-textarea__inner {
+  box-shadow: none !important;
+  border: 1.5px solid #e2e8f0 !important;
+  border-radius: 8px !important;
+  background: #f8fafc !important;
+  transition: border-color 0.2s, box-shadow 0.2s !important;
+  font-family: inherit;
+}
+.el-textarea__inner:focus {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12) !important;
+  background: #fff !important;
+  outline: none !important;
+}
+.el-select .el-input__wrapper { cursor: pointer; }
+
+/* ── 卡片 ── */
+.el-card {
+  border-radius: 12px !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.04) !important;
+}
+.el-card__header {
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  color: #0f172a !important;
+  border-bottom: 1px solid #f1f5f9 !important;
+  padding: 14px 20px !important;
+}
+.el-card__body { padding: 20px !important; }
+
+/* ── 按钮 ── */
+.el-button { border-radius: 8px !important; font-weight: 500 !important; }
+.el-button--primary { background: #3b82f6 !important; border-color: #3b82f6 !important; }
+.el-button--primary:hover { background: #2563eb !important; border-color: #2563eb !important; }
+.el-button--default { border-color: #e2e8f0 !important; color: #374151 !important; }
+.el-button--default:hover { border-color: #93c5fd !important; color: #3b82f6 !important; background: #eff6ff !important; }
+
+/* ── 表格：彻底解决 fixed 列溢出 ── */
+.el-table {
+  border-radius: 10px !important;
+  border: 1px solid #e2e8f0 !important;
+  /* 不能设 overflow:hidden，会破坏 fixed 列阴影，改用 clip */
+  clip-path: inset(0 round 10px);
+}
+.el-table th.el-table__cell {
+  background: #f8fafc !important;
+  color: #475569 !important;
+  font-weight: 600 !important;
+  font-size: 12.5px !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+.el-table td.el-table__cell {
+  border-bottom: 1px solid #f1f5f9 !important;
+  color: #374151 !important;
+  font-size: 13.5px !important;
+}
+.el-table--striped .el-table__body tr.el-table__row--striped td { background: #fafbfd !important; }
+.el-table__body tr:hover > td { background: #eff6ff !important; }
+/* fixed 列右侧不超出卡片 */
+.el-table__fixed-right { right: 0 !important; }
+.el-table__fixed-right-patch { background: #f8fafc !important; }
+
+/* ── 标签 ── */
+.el-tag { border-radius: 6px !important; font-size: 12px !important; font-weight: 500 !important; }
+.el-tag--success { background: #f0fdf4 !important; color: #16a34a !important; border-color: #bbf7d0 !important; }
+.el-tag--danger  { background: #fef2f2 !important; color: #dc2626 !important; border-color: #fecaca !important; }
+.el-tag--warning { background: #fffbeb !important; color: #d97706 !important; border-color: #fde68a !important; }
+.el-tag--info    { background: #f8fafc !important; color: #64748b !important; border-color: #e2e8f0 !important; }
+.el-tag--primary { background: #eff6ff !important; color: #2563eb !important; border-color: #bfdbfe !important; }
+
+/* ── 对话框：限制最大高度，内容可滚动，居中显示 ── */
+.el-dialog {
+  border-radius: 16px !important;
+  overflow: hidden !important;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.12) !important;
+  max-height: 90vh !important;
+  display: flex !important;
+  flex-direction: column !important;
+  margin: 5vh auto !important;
+}
+.el-dialog__header {
+  padding: 20px 24px 16px !important;
+  border-bottom: 1px solid #f1f5f9;
+  margin: 0 !important;
+  flex-shrink: 0 !important;
+}
+.el-dialog__title { font-weight: 700 !important; font-size: 16px !important; color: #0f172a !important; }
+.el-dialog__body {
+  padding: 20px 24px !important;
+  overflow-y: auto !important;
+  flex: 1 !important;
+  /* 移动端适配 */
+  max-height: calc(90vh - 130px) !important;
+}
+.el-dialog__footer {
+  border-top: 1px solid #f1f5f9;
+  padding: 14px 24px !important;
+  flex-shrink: 0 !important;
+}
+/* 移动端对话框全屏 */
+@media (max-width: 640px) {
+  .el-dialog {
+    width: 95vw !important;
+    max-height: 95vh !important;
+    margin: 2.5vh auto !important;
+  }
+  .el-dialog__body { max-height: calc(95vh - 130px) !important; }
+}
+
+/* ── Tabs ── */
+.el-tabs__item { font-size: 14px !important; font-weight: 500 !important; }
+.el-tabs__item.is-active { color: #3b82f6 !important; font-weight: 600 !important; }
+.el-tabs__active-bar { background: #3b82f6 !important; }
+
+/* ── 分页 ── */
+.el-pagination.is-background .el-pager li.is-active { background: #3b82f6 !important; }
+
+/* ── 消息提示 ── */
+.el-message { border-radius: 10px !important; }
+
+/* ── 滚动条 ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* ── 移动端响应式基础 ── */
+@media (max-width: 768px) {
+  /* 隐藏侧边栏文字，只显示图标 */
+  .sidebar { width: 64px !important; min-width: 64px !important; }
+  .logo-text, .nav-label, .nav-section-label, .sidebar-collapse span { display: none !important; }
+  /* 顶栏精简 */
+  .topbar { padding: 0 12px !important; }
+  .user-name { display: none !important; }
+  .topbar-badge { display: none !important; }
+  /* 内容区减少 padding */
+  .page-content { padding: 12px !important; }
+  /* 表格操作列按钮换行 */
+  .action-btns { flex-wrap: wrap !important; gap: 2px !important; }
+}

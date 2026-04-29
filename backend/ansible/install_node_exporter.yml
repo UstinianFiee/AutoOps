@@ -1,0 +1,77 @@
+---
+- name: 安装 node_exporter 监控采集器（Docker 部署 + 华为云镜像）
+  hosts: target
+  become: yes
+  gather_facts: yes
+
+  vars:
+    node_exporter_image: "swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/prom/node-exporter:v1.9.1"
+    node_exporter_port: 9100
+    container_name: node_exporter
+
+  tasks:
+    - name: 确认 Docker 可用
+      command: docker --version
+      register: docker_check
+      changed_when: false
+      failed_when: false
+
+    - name: 如 Docker 未安装则报错退出
+      fail:
+        msg: "Docker 未安装，请先执行服务器初始化"
+      when: docker_check.rc != 0
+
+    - name: 检查 node_exporter 容器是否存在
+      shell: docker ps -a --filter "name=^{{ container_name }}$" --format "{{ '{{' }}.Names{{ '}}' }}"
+      register: container_exists
+      changed_when: false
+
+    - name: 检查 node_exporter 是否在运行
+      shell: docker ps --filter "name=^{{ container_name }}$" --filter "status=running" --format "{{ '{{' }}.Names{{ '}}' }}"
+      register: container_running
+      changed_when: false
+
+    - name: 拉取 node_exporter 镜像（华为云）
+      command: docker pull {{ node_exporter_image }}
+      when: container_exists.stdout == ''
+
+    - name: 启动 node_exporter 容器（首次创建）
+      shell: |
+        docker run -d \
+          --name {{ container_name }} \
+          --restart unless-stopped \
+          --network host \
+          --pid host \
+          -v /proc:/host/proc:ro \
+          -v /sys:/host/sys:ro \
+          -v /:/rootfs:ro \
+          {{ node_exporter_image }} \
+          --path.procfs=/host/proc \
+          --path.sysfs=/host/sys \
+          --path.rootfs=/rootfs \
+          --web.listen-address=:{{ node_exporter_port }} \
+          --collector.systemd \
+          --collector.processes
+      when: container_exists.stdout == ''
+
+    - name: 启动已停止的 node_exporter 容器
+      command: docker start {{ container_name }}
+      when:
+        - container_exists.stdout != ''
+        - container_running.stdout == ''
+
+    - name: 等待 node_exporter 端口就绪
+      wait_for:
+        port: "{{ node_exporter_port }}"
+        host: localhost
+        timeout: 30
+
+    - name: 验证 node_exporter 指标接口
+      uri:
+        url: "http://localhost:{{ node_exporter_port }}/metrics"
+        return_content: no
+        status_code: 200
+
+    - name: 输出安装结果
+      debug:
+        msg: "node_exporter 运行成功，监听端口 {{ node_exporter_port }}"

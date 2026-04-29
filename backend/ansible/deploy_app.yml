@@ -1,0 +1,48 @@
+---
+- name: 部署应用
+  hosts: target
+  become: yes
+  gather_facts: no
+
+  tasks:
+    - name: 创建应用目录
+      file:
+        path: "{{ deploy_path | default('/opt/apps') }}/{{ app_name }}"
+        state: directory
+        mode: '0755'
+
+    - name: 克隆或更新 Git 仓库（禁用 HTTP/2 避免 curl 16 错误）
+      shell: |
+        export GIT_CONFIG_NOSYSTEM=1
+        git config --global http.version HTTP/1.1
+        git config --global http.postBuffer 524288000
+        DEST="{{ deploy_path | default('/opt/apps') }}/{{ app_name }}"
+        if [ -d "$DEST/.git" ]; then
+          cd "$DEST" && git fetch origin && git reset --hard origin/{{ branch | default('main') }}
+        else
+          git clone --branch {{ branch | default('main') }} {{ git_url }} "$DEST"
+        fi
+      when: git_url is defined and git_url != ''
+
+    - name: 上传 docker-compose.yml
+      copy:
+        src: "{{ compose_src }}"
+        dest: "{{ deploy_path | default('/opt/apps') }}/{{ app_name }}/docker-compose.yml"
+      when: compose_src is defined and compose_src != ''
+
+    - name: 停止旧容器
+      shell: |
+        cd {{ deploy_path | default('/opt/apps') }}/{{ app_name }} && docker compose down --remove-orphans || true
+
+    - name: 拉取最新镜像
+      shell: |
+        cd {{ deploy_path | default('/opt/apps') }}/{{ app_name }} && docker compose pull || true
+
+    - name: 启动容器
+      shell: |
+        cd {{ deploy_path | default('/opt/apps') }}/{{ app_name }} && docker compose up -d
+      register: compose_result
+
+    - name: 输出部署结果
+      debug:
+        msg: "{{ compose_result.stdout }}"
